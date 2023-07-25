@@ -11,8 +11,8 @@ x = y = range(100)
 class Field:
 	def __init__(self,vr,ln,xi=x,yi=y):
 		self.field = self.fieldgen(vr,ln,xi,yi)
-		self.mean = self.mean()
-		self.stdvar = self.stdvar()
+		self.mean = np.mean(self.field)
+		self.stdvar = np.std(self.field)
 
 	# Generates the field with size xi and yi
 	def fieldgen(self,vr,ln,xi=x,yi=y):
@@ -20,22 +20,10 @@ class Field:
 		srf = gs.SRF(model)
 		field = srf((xi,yi), mesh_type='structured') 
 		return np.array(field)
-
-	# Calcs the mean of the plot
-	def mean(self):
-		mean = sum(sum(self.field))/self.field.size
-		return mean
-
-	# Calcs the standard variation of the plot
-	def stdvar(self):
-		sigmaq = sum([(value - self.mean)**2 for value in np.nditer(self.field)])/self.field.size
-		sigma = math.sqrt(sigmaq)
-		return sigma
 	
 	# Prints te results
 	def results(self):
 		print({'Mean':round(self.mean,3),'Standard Variation':round(self.stdvar,3)})
-
 
 # Creates a list of n plots, a list of the plots' means and variations and plots them
 class FieldPlot:
@@ -56,9 +44,7 @@ class FieldPlot:
 		plt.show()
 
 def main():
-	plot = FieldPlot()
-	plot.pltM()
-	plot.pltS()
+	plot = Field(10,10)
 
 if __name__ == '__main__':
 	main()
