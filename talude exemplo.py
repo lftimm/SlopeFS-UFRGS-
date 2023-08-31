@@ -9,7 +9,7 @@
 #
 #                                       Professor: Renato Vaz Linn
 #
-#  CARTÃO                            NOME                    
+#  CARTÃO                           	 NOME                    
 # [000001]   [                   Nome Sobrenome                   ] 
 # [000002]   [                   Nome Sobrenome                   ] 
 # [000003]   [                   Nome Sobrenome                   ]  
