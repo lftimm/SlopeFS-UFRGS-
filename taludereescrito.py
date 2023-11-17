@@ -5,18 +5,25 @@ import numpy as np
 This script has the purpose of modeling a real slope situation.
 It is divided into two parts. Model refers to the handling of information and maths.
 View is used for displaying the values calculated.
-In the future, this will be the basis of a bigger project.
 
-Desmos link for a visual representation of the given problem.
-
+Desmos link for a visual representation of the problem.
 https://www.desmos.com/calculator/p9z9sikh4e
 """
+
+""" TODO:
+	- Calc FS Fellenius
+	- Calc FS Bishop
+	- Exemplo de Talude do Artigo, calcular o FS dele.
+
+	- Graph FS
+"""
+
 class Model:
 	"""
 	Model class
 	-----------
 	It functions as the brain of the program.
-	It performs multiple geometry calculations that serve the purpose of the project.
+	It performs multiple geometric calculations that serve the purpose of the project.
 	Together with it there are the SoilSlope() and Circle() class that make up the model for the slope.
 	
 	Review of the main methods:
@@ -33,12 +40,13 @@ class Model:
 		self.points = self.intersec()
 		self.c_points = self.splitgeometry()
 		self.polys = self.mk_polys()
+		##############
 		self.polys_A = self.calc_areas()
 
 	def intersec(self):
 		"""
 			Calculates the points of intersection of the slope and the circle.
-			It uses basic second degree equations to find the intersections.
+			It uses second degree equations to find the intersections.
 			It returns the points in order from left to right.
 		"""
 		t = math.tan(self.soilSlope.alp)
@@ -75,10 +83,10 @@ class Model:
 	def splitgeometry(self):
 		"""
 			It splits the circle into equal parts based on the number of slices given.
-			It uses a trigonometric and analytical geometric approach.
-			Together with it there is the total_angle method that, as the name might suggest, calculates the total angle of the intersected points.
-			It returns a list of the tuples containing the points.
-			There is one thing that might be considered changing, in the definition of f() there is a rounding being done with the map() function, this can be discarded.
+			It uses a trigonometrical approach.
+			Together there is the total_angle method that, as the name says, calculates the total angle of the intersected points.
+			It returns a list of tuples containing the points.
+			One thing might be removed, in the definition of f() there is a rounding done with the map() function.
 		"""
 		a = math.tan(self.soilSlope.alp)
 		pL,pR = self.points
@@ -107,9 +115,9 @@ class Model:
 	def mk_polys(self):
 		"""
 			This method creates the polygons whose areas are going to be calculated.
-			It takes the list of points in the circle, reflects them into the corresponding part of the slope.
-			Together with it there is the pair_points() method, that takes the previous points and orders thancounter-clockwise.
-			It returns an array of 4x1 arrays of the points .
+			It takes the list of points in the circle, reflects them into the corresponding part of the surface.
+			Together with it there is the pair_points method, which takes the previous points and orders them counter-clockwise.
+			It returns an array of 4x1 arrays with the points .
 		"""
 		c_parts = self.c_points
 		pts_x,pts_y = zip(*c_parts)
@@ -167,7 +175,7 @@ class Model:
 """
 	Class representing the soil and the slope.
 	userInput gathers input from the user if False is passed.
-	contains magic numbers that ought to be removed sometime in the future.
+	contains magic numbers that should be removed.
 """
 class SoilSlope:
 	def __init__(self,shortcut=True):
@@ -192,7 +200,7 @@ class SoilSlope:
 			 
 """
 	Class that defines a circle given a SoilSlope.
-	contains magic numbers that ought to be removed sometime in the future.
+	contains magic numbers that should be removed.
 """
 class Circle:
 	def __init__(self,parent: SoilSlope):
@@ -205,8 +213,7 @@ class Circle:
 """
 	TODO:
 	Class that makes it possible to view the contents of the model.
-	Make it according to the MVC paradigm.
-	Possibilites: plain old matplotlib or wxpython, for a GUI.
+	Possibilites: matplotlib or wxpython, for a GUI.
 """
 class ModelView:
 	def __init__(self):
