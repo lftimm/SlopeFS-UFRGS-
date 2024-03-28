@@ -1,26 +1,25 @@
+from typing import Optional
+import os
+
 import math
 import numpy as np
 from scipy import optimize
-from typing import Optional, Tuple
 
-from matplotlib import pyplot
-
-""" TODO:
-    - Calc FS Fellenius (OK!)
-    - Calc FS Bishop (OK!)
-    - Exemplo de Talude do Artigo, calcular o FS dele. 
-
-    - Graph FS 
-"""
-
-"""
-    Class representing the space of the problem.
-    userInput gathers input from the user if False is passed.
-    contains magic numbers for default values.
-"""
+from copy import deepcopy
+import csv
 
 
-class Soilspace:
+class SoilSpace:
+    """
+        SoilSpace Class:
+            It represents the entire space of the problem.
+            - The physical characteristics of the slope
+            - The mechnanical characteristics of the soil
+        Uses:
+            Used standalone to define the soil before sending it to Model and Soil_fs
+            Default values present to simplify analysing behaviour
+    """
+
     def __init__(self, c=20, phi=25, gam=18.5, alp=30, h=15, num_slice=5):
         self.properties = {
             'c': c,
@@ -31,41 +30,40 @@ class Soilspace:
             'num_slice': num_slice
         }
 
+        self.update_slope_len()
+        self.update_circle()
+
+    def update_slope_len(self):
         self.properties['slope_len'] = self.properties['h'] / math.tan(self.properties['alp'])
 
-        self.properties['Circle'] = {
+    def update_circle(self):
+        circle = {
             'xc': 0.5 * self.properties['h'] / math.tan(self.properties['alp']),
             'yc': 1.67 * self.properties['h']
         }
 
-        self.properties['Circle']['R'] = 1.5 * math.sqrt(
-            self.properties['Circle']['xc'] ** 2 + self.properties['Circle']['yc'] ** 2)
+        circle['R'] = 1.5 * math.sqrt(circle['xc'] ** 2 + circle['yc'] ** 2)
+
+        self.properties['Circle'] = circle
+
+    def __str__(self):
+        return f'{self.properties}'
 
 
 class Model:
     """
-    Model class
-    -----------
-    It functions as the brain of the program.
-    It performs multiple geometric calculations that serve the purpose of the project.
-    Together with it there are the SoilSlope() and Circle() class that make up the model for the slope.
-    
-    Review of the main methods:
-    __init__ -> defines the slope, circle and begins the model.
-    initModel -> Organizes all the processes needed for the program and its results.
+    Model class:
+    Responsible for calculating the factor of safety of the slope.
     """
 
-    def __init__(self, soil: Optional[Soilspace] = None):
+    def __init__(self, soil: Optional[SoilSpace] = None):
         if soil is None:
-            soil = Soilspace()
+            soil = SoilSpace()
 
         self.sl = soil.properties
 
         self.circle = self.sl['Circle']
 
-        self.results = self.initModel()
-
-    def initModel(self) -> Tuple[float]:
         self.points = self.intersec()
         self.c_points = self.splitgeometry()
         self.polys = self.mk_polys()
@@ -73,7 +71,7 @@ class Model:
         self.dxs, self.alphas = self.calc_alphas()
         self.polys_A = self.calc_areas()
 
-        return self.end_results()
+        self.results = self.end_results()
 
     def intersec(self):
         """
@@ -115,7 +113,6 @@ class Model:
     def splitgeometry(self):
         """
             It splits the circle into equal parts based on the number of slices given.
-            It uses a trigonometrical approach.
             Together there is the total_angle method, it measures the total angle of the intersection points.
             It returns a list of tuples containing the points.
             One thing might be removed, in the definition of f() there is a rounding done with the map() function.
@@ -207,7 +204,6 @@ class Model:
         """
             It calculates the areas of the polygons.
             It uses the shoelace formula for calculating the area.
-            It takes 4x1 arrays, orders them and takes their determinant/2, adding the areas.
             It returns an array containing the areas of each of the polygons.
         """
         p = self.polys
@@ -226,6 +222,11 @@ class Model:
         return areas
 
     def end_results(self):
+        """
+            Finalizes everything by gathering all the previous steps and calculating the FS.
+            Bishop is an implicit equation, its roots are found using Newton's method (via Scipy.optimize)
+            It returns both values in a dictionary format, according to the format used by the SoilSpace class.
+        """
         gam = self.sl['gam']
         c = self.sl['c']
         phi = self.sl['phi']
@@ -250,40 +251,98 @@ class Model:
         def bishop(fs):
             bip1 = (sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])) ** -1
             bip2 = sum([(c * dxs[i] + gam * are[i] * math.tan(phi)) / (
-                        math.cos(alp[i]) + math.sin(alp[i]) * math.tan(phi) / fs) for i in range(size)])
+                    math.cos(alp[i]) + math.sin(alp[i]) * math.tan(phi) / fs) for i in range(size)])
             return fs - bip1 * bip2
 
         bip = optimize.newton(bishop, x0=2)
         fel = fellenius()
 
-        return fel, bip
+        return {'fel': fel, 'bis': bip}
 
-    def __str__(self, full=False):
-        fel = '{:.3f}'.format(self.results[0])
-        bis = '{:.3f}'.format(self.results[1])
 
-        string = ''
+class SoilFs:
+    """
+        SoilFs:
+        Serves as a wrapper for everything.
+        Houses methods for showing and analyzing data.
+    """
 
-        string += 'Model Results\n'
+    def __init__(self, soil: Optional[SoilSpace] = None):
+        self.soil = soil
+        self.model = Model(self.soil)
 
-        s1 = '-'*len(f'Fellenius: {fel}, Bishop: {bis}')+'\n'
+    def variate_soil(self, var: str, end: float, step: float, start=None, base: Optional[SoilSpace] = None) -> list[SoilSpace]:
+        if base is None:
+            base = self.soil
 
-        string += s1
-        string += f'Fellenius: {fel}, Bishop: {bis}\n'
-        if not full:
-            return string
+        assert var in base.properties, f'Invalid key: Property \'{var}\' doesn\'t exist.'
+        assert type(base.properties[var]) is int or float, f'Invalid key \'{var}\': must be numeric.'
+        assert step > 0, f'Invalid Range: step must be greater than 0.'
+
+        def asserts(start, end, step):
+            assert end > start, f'Invalid Range: end > start.'
+            n_steps = (end - start) / step
+            assert n_steps > 1, f'Invalid Range: Step too big. {n_steps}'
+
+        copy = deepcopy(base)
+        samples = []
+
+        if var in ['alp', 'phi']:
+            if start is None:
+                start = round(math.degrees(copy.properties[var]))
+
+            asserts(start, end, step)
+
+            while start <= end:
+                copy.properties[var] = math.tan(math.radians(start))
+                copy.update_slope_len()
+                copy.update_circle()
+                samples.append(deepcopy(copy))
+                start += step
         else:
-            string += s1[:int(len(s1)/2)]+'\n'
-            string += 'Parameters Used: {\n'
+            if start is None:
+                start = copy.properties[var]
 
-            string += '}'
+            asserts(start, end, step)
 
-            return string
+            while start <= end:
+                copy.properties[var] = start
+                copy.update_slope_len()
+                copy.update_circle()
+                samples.append(deepcopy(copy))
+                start += step
 
-def main():
-    soil = Soilspace(c=10, h=50, alp=45, num_slice=500)
-    model = Model(soil)
-    print(model.__str__(full=True))
+        return samples
 
-if __name__ == '__main__':
-    main()
+    def change_to_csv(self, var: str, end: float, step: float, start=None, filename='default.txt'):
+        """
+            Method for analysis.
+            One variable can be isolated for study, given a range from start to finish.
+            Its output is written in a csv file that can be imported by Excel.
+        """
+        if os.path.exists(filename):
+            counter = 2
+            name, extension = os.path.splitext(filename)
+            while True:
+                new_name = f'{name}({counter}).{extension}'
+                if not os.path.exists(new_name):
+                    filename = new_name
+                    break
+                counter += 1
+
+        fields = ['c', 'phi', 'gam', 'alp', 'h', 'num_slice', 'slope_len', 'fel', 'bis']
+
+        copy = deepcopy(self.soil)
+        variations = self.variate_soil(var, end, step, start, base=copy)
+        normal_rows = [soil.properties for soil in variations]
+        result_rows = [Model(soil).results for soil in variations]
+        final_rows = []
+        for row1, row2 in zip(normal_rows, result_rows):
+            updated_row = {**row1, **row2}
+            del updated_row['Circle']
+            final_rows.append(list(updated_row.values()))
+
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile, delimiter=';')
+            writer.writerow(fields)
+            writer.writerows(final_rows)
