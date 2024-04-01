@@ -1,10 +1,10 @@
-from SlopeFs import SoilSpace, SoilFs
+import SlopeFs
 
 
 def main():
-    soil = SoilSpace(h=5, num_slice=500)
-    model = SoilFs(soil)
-    model.change_to_csv('h', 100, 1, filename='test_h.txt')
+    soil = SlopeFs.SoilSpace(h=10, num_slice=100)
+    model = SlopeFs.SoilFs(soil)
+    model.change_to_csv('h', 100, 10, filename='test_h.txt')
 
 
 if __name__ == '__main__':

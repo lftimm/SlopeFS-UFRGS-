@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict, Tuple, List
 import os
 
 import math
@@ -60,20 +60,20 @@ class Model:
         if soil is None:
             soil = SoilSpace()
 
-        self.sl = soil.properties
+        self.sl: Dict[str, float] = soil.properties
 
-        self.circle = self.sl['Circle']
+        self.circle: Dict[str, float] = self.sl['Circle']
 
-        self.points = self.intersec()
-        self.c_points = self.splitgeometry()
-        self.polys = self.mk_polys()
+        self.points: Tuple[Tuple, Tuple] = self.intersec()
+        self.c_points: List[Tuple] = self.splitgeometry()
+        self.polys: List[np.array] = self.mk_polys()
 
         self.dxs, self.alphas = self.calc_alphas()
-        self.polys_A = self.calc_areas()
+        self.polys_A: List[float] = self.calc_areas()
 
-        self.results = self.end_results()
+        self.results: Dict[str, float] = self.end_results()
 
-    def intersec(self):
+    def intersec(self) -> Tuple[Tuple, Tuple]:
         """
             Calculates the points of intersection of the slope and the circle.
             It uses second degree equations to find the intersections.
@@ -91,26 +91,27 @@ class Model:
 
         delta = b ** 2 - 4 * a * c
 
-        if delta > 0:
-            def f(x):
-                if 0 < x < l:
-                    return x, t * x
-                elif x < 0:
-                    return xc - math.sqrt(r ** 2 - yc ** 2), 0
-                else:
-                    return xc + math.sqrt(r ** 2 + 2 * h * yc - h ** 2 - yc ** 2), h
+        assert delta > 0, 'Math error, delta <= 0'
 
-            x1 = (-b + math.sqrt(delta)) / (2 * a)
-            x2 = (-b - math.sqrt(delta)) / (2 * a)
-            p1 = f(x1)
-            p2 = f(x2)
+        def f(x):
+            if 0 < x < l:
+                return x, t * x
+            elif x < 0:
+                return xc - math.sqrt(r ** 2 - yc ** 2), 0
+            else:
+                return xc + math.sqrt(r ** 2 + 2 * h * yc - h ** 2 - yc ** 2), h
 
-            p_l = p1 if p1[0] == min(p1[0], p2[0]) else p2
-            p_r = p2 if p_l[0] == p1[0] else p1
+        x1 = (-b + math.sqrt(delta)) / (2 * a)
+        x2 = (-b - math.sqrt(delta)) / (2 * a)
+        p1 = f(x1)
+        p2 = f(x2)
 
-            return p_l, p_r
+        p_l = p1 if p1[0] == min(p1[0], p2[0]) else p2
+        p_r = p2 if p_l[0] == p1[0] else p1
 
-    def splitgeometry(self):
+        return p_l, p_r
+
+    def splitgeometry(self) -> List[Tuple]:
         """
             It splits the circle into equal parts based on the number of slices given.
             Together there is the total_angle method, it measures the total angle of the intersection points.
@@ -125,7 +126,15 @@ class Model:
         v_p_r = np.array(p_r)
         v_c = np.array([xc, yc])
 
-        tot_a = self.total_angle(p_l, p_r, xc, yc)
+        def total_angle(p1, p2, xc, yc):
+            dist = lambda p1, p2: math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+            ct = (xc, yc)
+            a, b, c = dist(p1, p2), dist(p1, ct), dist(p2, ct)
+            tot_angle = math.acos(-(a ** 2 - (b ** 2 + c ** 2)) / (2 * b * c))
+
+            return tot_angle
+
+        tot_a = total_angle(p_l, p_r, xc, yc)
         alp = tot_a / ns
         gam = math.atan(abs((v_c[1] - v_p_r[1]) / (v_c[0] - v_p_r[0])))
 
@@ -133,15 +142,7 @@ class Model:
                           r * np.array([math.cos(-(gam + n * alp)), math.sin(-(gam + n * alp))]) + v_c)
         return [tuple(f(n)) for n in range(ns + 1)]
 
-    def total_angle(self, p1, p2, xc, yc):
-        dist = lambda p1, p2: math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
-        ct = (xc, yc)
-        a, b, c = dist(p1, p2), dist(p1, ct), dist(p2, ct)
-        tot_angle = math.acos(-(a ** 2 - (b ** 2 + c ** 2)) / (2 * b * c))
-
-        return tot_angle
-
-    def mk_polys(self):
+    def mk_polys(self) -> List[Tuple]:
         """
             This method creates the polygons whose areas are going to be calculated.
             It takes the list of points in the circle, reflects them into the corresponding part of the surface.
@@ -166,17 +167,17 @@ class Model:
 
         full_points = [c_parts, up_c_parts]
 
-        return self.pair_points(full_points)
+        def pair_points(points):
+            polys = []
+            for i in range(0, len(points[0])):
+                try:
+                    polys.append([points[0][i], points[1][i], points[1][i + 1], points[0][i + 1]])
+                except IndexError:
+                    pass
 
-    def pair_points(self, points):
-        polys = []
-        for i in range(0, len(points[0])):
-            try:
-                polys.append([points[0][i], points[1][i], points[1][i + 1], points[0][i + 1]])
-            except IndexError:
-                pass
+            return np.array(polys)
 
-        return np.array(polys)
+        return pair_points(full_points)
 
     def calc_alphas(self):
         """
@@ -200,7 +201,7 @@ class Model:
 
         return dxs, alphas
 
-    def calc_areas(self):
+    def calc_areas(self) -> List[float]:
         """
             It calculates the areas of the polygons.
             It uses the shoelace formula for calculating the area.
@@ -221,7 +222,7 @@ class Model:
 
         return areas
 
-    def end_results(self):
+    def end_results(self) -> Dict[str, float]:
         """
             Finalizes everything by gathering all the previous steps and calculating the FS.
             Bishop is an implicit equation, its roots are found using Newton's method (via Scipy.optimize)
@@ -271,7 +272,8 @@ class SoilFs:
         self.soil = soil
         self.model = Model(self.soil)
 
-    def variate_soil(self, var: str, end: float, step: float, start=None, base: Optional[SoilSpace] = None) -> list[SoilSpace]:
+    def variate_soil(self, var: str, end: float, step: float,
+                     start=None, base: Optional[SoilSpace] = None) -> list[SoilSpace]:
         if base is None:
             base = self.soil
 
@@ -314,7 +316,7 @@ class SoilFs:
 
         return samples
 
-    def change_to_csv(self, var: str, end: float, step: float, start=None, filename='default.txt'):
+    def change_to_csv(self, var: str, end: float, step: float, start=None, filename='default.txt') -> None:
         """
             Method for analysis.
             One variable can be isolated for study, given a range from start to finish.
@@ -324,7 +326,7 @@ class SoilFs:
             counter = 2
             name, extension = os.path.splitext(filename)
             while True:
-                new_name = f'{name}({counter}).{extension}'
+                new_name = f'{name}({counter}){extension}'
                 if not os.path.exists(new_name):
                     filename = new_name
                     break
