@@ -1,13 +1,7 @@
 from typing import Optional, Dict, Tuple, List
-import os
-
 import math
 import numpy as np
 from scipy import optimize
-
-from copy import deepcopy
-import csv
-
 
 class SoilSpace:
     """
