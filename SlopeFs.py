@@ -20,7 +20,7 @@ class SoilSpace:
             Default values present to simplify analysing behaviour
     """
 
-    def __init__(self, c=20, phi=25, gam=18.5, alp=30, h=15, num_slice=5):
+    def __init__(self, c=20, phi=25, gam=18.5, alp=30, h=15, num_slice=5, circle: Dict[str, float] = None):
         self.properties = {
             'c': c,
             'phi': math.radians(phi),
@@ -31,18 +31,27 @@ class SoilSpace:
         }
 
         self.update_slope_len()
-        self.update_circle()
+
+        if not circle:
+            self.update_circle()
+        else:
+            assert ['xc', 'yc', 'R'] == list(circle.keys()), f'Wrong dictionary keys: {list(circle.keys())}'
+            self.update_circle(xc=circle['xc'], yc=circle['yc'], r=circle['R'])
 
     def update_slope_len(self):
         self.properties['slope_len'] = self.properties['h'] / math.tan(self.properties['alp'])
 
-    def update_circle(self):
-        circle = {
-            'xc': 0.5 * self.properties['h'] / math.tan(self.properties['alp']),
-            'yc': 1.67 * self.properties['h']
-        }
+    def update_circle(self, xc=None, yc=None, r=None):
+        if not xc and not yc and not r:
+            xc = 0.5 * self.properties['h'] / math.tan(self.properties['alp'])
+            yc = 1.67 * self.properties['h']
+            r = 1.5 * math.sqrt(xc ** 2 + yc ** 2)
 
-        circle['R'] = 1.5 * math.sqrt(circle['xc'] ** 2 + circle['yc'] ** 2)
+        circle = {
+            'xc': xc,
+            'yc': yc,
+            'R': r
+        }
 
         self.properties['Circle'] = circle
 
@@ -60,18 +69,17 @@ class Model:
         if soil is None:
             soil = SoilSpace()
 
+        self.soil = soil
         self.sl: Dict[str, float] = soil.properties
 
         self.circle: Dict[str, float] = self.sl['Circle']
 
         self.points: Tuple[Tuple, Tuple] = self.intersec()
-        self.c_points: List[Tuple] = self.splitgeometry()
+        self.c_points: List[Tuple] = self.split_geometry()
         self.polys: List[np.array] = self.mk_polys()
 
         self.dxs, self.alphas = self.calc_alphas()
         self.polys_A: List[float] = self.calc_areas()
-
-        self.results: Dict[str, float] = self.end_results()
 
     def intersec(self) -> Tuple[Tuple, Tuple]:
         """
@@ -91,7 +99,7 @@ class Model:
 
         delta = b ** 2 - 4 * a * c
 
-        assert delta > 0, 'Math error, delta <= 0'
+        assert delta > 0, 'Math error, delta <= 0, Circle doesn\'t intersect slope.'
 
         def f(x):
             if 0 < x < l:
@@ -111,7 +119,7 @@ class Model:
 
         return p_l, p_r
 
-    def splitgeometry(self) -> List[Tuple]:
+    def split_geometry(self) -> List[Tuple]:
         """
             It splits the circle into equal parts based on the number of slices given.
             Together there is the total_angle method, it measures the total angle of the intersection points.
@@ -222,6 +230,20 @@ class Model:
 
         return areas
 
+
+class SoilFs:
+    """
+        SoilFs:
+        Serves as a wrapper for everything.
+        Houses methods for showing and analyzing data.
+    """
+
+    def __init__(self, soil: Optional[SoilSpace] = None):
+        self.model = Model(soil)
+        self.sl = self.model.soil.properties
+
+        self.results = self.end_results()
+
     def end_results(self) -> Dict[str, float]:
         """
             Finalizes everything by gathering all the previous steps and calculating the FS.
@@ -234,117 +256,36 @@ class Model:
         slen = self.sl['slope_len']
         n = self.sl['num_slice']
 
-        are = self.polys_A
-        alp = self.alphas
-        dxs = self.dxs
+        are = self.model.polys_A
+        alp = self.model.alphas
+        dxs = self.model.dxs
 
-        u = 0
+        bip = self.bishop(c, gam, are, alp, phi, dxs)
+        fel = self.fellenius(c, gam, are, alp, phi, slen, n)
+
+        return {'fel': fel, 'bis': bip}
+
+    @staticmethod
+    def fellenius(c, gam, are, alp, phi, slen, n, u=0):
         size = len(are)
+        fell1 = sum(
+            [c * slen / n + (gam * are[i] * math.cos(alp[i]) - u * slen) * math.tan(phi) for i in range(size)])
+        fell2 = sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])
 
-        def fellenius():
-            fell1 = sum(
-                [c * slen / n + (gam * are[i] * math.cos(alp[i]) - u * slen) * math.tan(phi) for i in range(size)])
-            fell2 = sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])
+        fs = fell1 / fell2
+        return fs
 
-            fs = fell1 / fell2
-            return fs
-
-        def bishop(fs):
+    @staticmethod
+    def bishop(c, gam, are, alp, phi, dxs):
+        def bishop_calc(fs):
+            size = len(are)
             bip1 = (sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])) ** -1
             bip2 = sum([(c * dxs[i] + gam * are[i] * math.tan(phi)) / (
                     math.cos(alp[i]) + math.sin(alp[i]) * math.tan(phi) / fs) for i in range(size)])
             return fs - bip1 * bip2
 
-        bip = optimize.newton(bishop, x0=2)
-        fel = fellenius()
-
-        return {'fel': fel, 'bis': bip}
+        return optimize.newton(bishop_calc, x0=2)
 
 
-class SoilFs:
-    """
-        SoilFs:
-        Serves as a wrapper for everything.
-        Houses methods for showing and analyzing data.
-    """
-
-    def __init__(self, soil: Optional[SoilSpace] = None):
-        self.soil = soil
-        self.model = Model(self.soil)
-
-    def variate_soil(self, var: str, end: float, step: float,
-                     start=None, base: Optional[SoilSpace] = None) -> list[SoilSpace]:
-        if base is None:
-            base = self.soil
-
-        assert var in base.properties, f'Invalid key: Property \'{var}\' doesn\'t exist.'
-        assert type(base.properties[var]) is int or float, f'Invalid key \'{var}\': must be numeric.'
-        assert step > 0, f'Invalid Range: step must be greater than 0.'
-
-        def asserts(start, end, step):
-            assert end > start, f'Invalid Range: end > start.'
-            n_steps = (end - start) / step
-            assert n_steps > 1, f'Invalid Range: Step too big. {n_steps}'
-
-        copy = deepcopy(base)
-        samples = []
-
-        if var in ['alp', 'phi']:
-            if start is None:
-                start = round(math.degrees(copy.properties[var]))
-
-            asserts(start, end, step)
-
-            while start <= end:
-                copy.properties[var] = math.tan(math.radians(start))
-                copy.update_slope_len()
-                copy.update_circle()
-                samples.append(deepcopy(copy))
-                start += step
-        else:
-            if start is None:
-                start = copy.properties[var]
-
-            asserts(start, end, step)
-
-            while start <= end:
-                copy.properties[var] = start
-                copy.update_slope_len()
-                copy.update_circle()
-                samples.append(deepcopy(copy))
-                start += step
-
-        return samples
-
-    def change_to_csv(self, var: str, end: float, step: float, start=None, filename='default.txt') -> None:
-        """
-            Method for analysis.
-            One variable can be isolated for study, given a range from start to finish.
-            Its output is written in a csv file that can be imported by Excel.
-        """
-        if os.path.exists(filename):
-            counter = 2
-            name, extension = os.path.splitext(filename)
-            while True:
-                new_name = f'{name}({counter}){extension}'
-                if not os.path.exists(new_name):
-                    filename = new_name
-                    break
-                counter += 1
-
-        fields = ['c', 'phi', 'gam', 'alp', 'h', 'num_slice', 'slope_len', 'fel', 'bis']
-
-        copy = deepcopy(self.soil)
-        variations = self.variate_soil(var, end, step, start, base=copy)
-        normal_rows = [soil.properties for soil in variations]
-        result_rows = [Model(soil).results for soil in variations]
-        final_rows = []
-        for row1, row2 in zip(normal_rows, result_rows):
-            updated_row = {**row1, **row2}
-            del updated_row['Circle']
-            final_rows.append(list(updated_row.values()))
-
-        with open(filename, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile, delimiter=';')
-            writer.writerow(fields)
-            writer.writerows(final_rows)
+    def __str__(self):
+        return f'{self.results}'
