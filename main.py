@@ -54,6 +54,9 @@ def minimize_bis(soil):
 
 
 def main():
+    fs = sfs.SoilFs()
+    print(fs)
+
 
 if __name__ == '__main__':
     main()
