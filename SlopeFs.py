@@ -1,7 +1,8 @@
 from typing import Optional, Dict, Tuple, List
 import math
 import numpy as np
-from scipy import optimize
+import scipy as sp
+
 
 class SoilSpace:
     """
@@ -14,7 +15,7 @@ class SoilSpace:
             Default values present to simplify analysing behaviour
     """
 
-    def __init__(self, c=20, phi=25, gam=18.5, alp=30, h=15, num_slice=5, circle: Dict[str, float] = None):
+    def __init__(self, c=20, phi=30, gam=18.5, alp=45, h=15, num_slice=50, circle: Dict[str, float] = None):
         self.properties = {
             'c': c,
             'phi': math.radians(phi),
@@ -25,21 +26,23 @@ class SoilSpace:
         }
 
         self.update_slope_len()
-
-        if not circle:
-            self.update_circle()
-        else:
-            assert ['xc', 'yc', 'R'] == list(circle.keys()), f'Wrong dictionary keys: {list(circle.keys())}'
-            self.update_circle(xc=circle['xc'], yc=circle['yc'], r=circle['R'])
+        self.update_circle(self, circle)
 
     def update_slope_len(self):
         self.properties['slope_len'] = self.properties['h'] / math.tan(self.properties['alp'])
 
-    def update_circle(self, xc=None, yc=None, r=None):
-        if not xc and not yc and not r:
+    @staticmethod
+    def update_circle(self, circle):
+        if not circle:
             xc = 0.5 * self.properties['h'] / math.tan(self.properties['alp'])
-            yc = 1.67 * self.properties['h']
-            r = 1.5 * math.sqrt(xc ** 2 + yc ** 2)
+            yc = 1.333 * self.properties['h']
+            r = 1 * math.sqrt(xc ** 2 + yc ** 2)
+        else:
+            keys = list(circle.keys())
+            assert ('xc' in keys and 'yc' in keys and 'R' in keys), f'Invalid keys {keys}'
+            xc = circle['xc']
+            yc = circle['yc']
+            r = circle['R']
 
         circle = {
             'xc': xc,
@@ -47,6 +50,7 @@ class SoilSpace:
             'R': r
         }
 
+        print(circle)
         self.properties['Circle'] = circle
 
     def __str__(self):
@@ -59,12 +63,12 @@ class Model:
     Responsible for calculating the factor of safety of the slope.
     """
 
-    def __init__(self, soil: Optional[SoilSpace] = None):
-        if soil is None:
-            soil = SoilSpace()
+    def __init__(self, sl: Optional[SoilSpace] = None):
+        if sl is None:
+            sl = SoilSpace()
 
-        self.soil = soil
-        self.sl: Dict[str, float] = soil.properties
+        self.soil = sl
+        self.sl: Dict[str, float] = sl.properties
 
         self.circle: Dict[str, float] = self.sl['Circle']
 
@@ -93,7 +97,7 @@ class Model:
 
         delta = b ** 2 - 4 * a * c
 
-        assert delta > 0, 'Math error, delta <= 0, Circle doesn\'t intersect slope.'
+        assert delta > 0, f'Math error, delta:{delta} <= 0, Circle doesn\'t intersect slope.'
 
         def f(x):
             if 0 < x < l:
@@ -105,6 +109,7 @@ class Model:
 
         x1 = (-b + math.sqrt(delta)) / (2 * a)
         x2 = (-b - math.sqrt(delta)) / (2 * a)
+
         p1 = f(x1)
         p2 = f(x2)
 
@@ -233,35 +238,65 @@ class SoilFs:
     """
 
     def __init__(self, soil: Optional[SoilSpace] = None):
-        self.model = Model(soil)
-        self.sl = self.model.soil.properties
+        if not soil:
+            soil = SoilSpace()
 
+        self.soil = soil
+        self.sl = soil.properties
         self.results = self.end_results()
+        self.fs = {'Fellenius': self.results.fun
+        }
 
-    def end_results(self) -> Dict[str, float]:
+    def end_results(self) -> Tuple[float]:
         """
             Finalizes everything by gathering all the previous steps and calculating the FS.
             Bishop is an implicit equation, its roots are found using Newton's method (via Scipy.optimize)
             It returns both values in a dictionary format, according to the format used by the SoilSpace class.
         """
-        gam = self.sl['gam']
-        c = self.sl['c']
-        phi = self.sl['phi']
-        slen = self.sl['slope_len']
-        n = self.sl['num_slice']
+        c0 = list(self.sl['Circle'].values())
+        model_0 = Model(self.soil)
+        fs = self.fellenius(model_0)
+        print(f"Inicial {fs}")
 
-        are = self.model.polys_A
-        alp = self.model.alphas
-        dxs = self.model.dxs
+        return (
+            sp.optimize.minimize(self.fellenius_call, x0=c0,method='SLSQP')
+        )
 
-        bip = self.bishop(c, gam, are, alp, phi, dxs)
-        fel = self.fellenius(c, gam, are, alp, phi, slen, n)
+    def fellenius_call(self, c0: List[float]):
+        circle = {
+            'xc': c0[0],
+            'yc': c0[1],
+            'R': c0[2]
+        }
+        print(c0)
+        self.soil.update_circle(self.soil, circle)
+        model = Model(self.soil)
 
-        return {'fel': fel, 'bis': bip}
+        return self.fellenius(model)
+
+    def bishop_call(self, c0):
+        circle = {
+            'xc': c0[0],
+            'yc': c0[1],
+            'R': c0[2]
+        }
+        print(c0)
+        self.soil.update_circle(self.soil, circle)
+        model = Model(self.soil)
+
+        return self.bishop(model)
 
     @staticmethod
-    def fellenius(c, gam, are, alp, phi, slen, n, u=0):
+    def fellenius(model: Model, u=0):
+        c = model.sl['c']
+        slen = model.sl['slope_len']
+        gam = model.sl['gam']
+        phi = model.sl['phi']
+        n = model.sl['num_slice']
+        are = model.polys_A
+        alp = model.alphas
         size = len(are)
+
         fell1 = sum(
             [c * slen / n + (gam * are[i] * math.cos(alp[i]) - u * slen) * math.tan(phi) for i in range(size)])
         fell2 = sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])
@@ -270,16 +305,31 @@ class SoilFs:
         return fs
 
     @staticmethod
-    def bishop(c, gam, are, alp, phi, dxs):
+    def bishop(model):
+        c = model.sl['c']
+        gam = model.sl['gam']
+        phi = model.sl['phi']
+        are = model.polys_A
+        alp = model.alphas
+        dxs = model.dxs
+        size = len(are)
+
         def bishop_calc(fs):
-            size = len(are)
             bip1 = (sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])) ** -1
             bip2 = sum([(c * dxs[i] + gam * are[i] * math.tan(phi)) / (
                     math.cos(alp[i]) + math.sin(alp[i]) * math.tan(phi) / fs) for i in range(size)])
             return fs - bip1 * bip2
 
-        return optimize.newton(bishop_calc, x0=2)
-
+        return sp.optimize.newton(bishop_calc, x0=2)
 
     def __str__(self):
-        return f'{self.results}'
+        return f'{self.fs}'
+
+
+def main():
+    soil = SoilSpace()
+    fs = SoilFs(soil)
+    print(fs.results)
+
+if __name__ == '__main__':
+    main()
