@@ -425,7 +425,15 @@ class View:
                 plt.plot([len, 2 * len], [h, h], color='#000000')
 
                 fel_c0 = full.results['min_fel_c0']
-                s1 = SoilSpace(circle={'xc':fel_c0[0],'yc':fel_c0[1],'R':fel_c0[2]})
+
+                nc = {'xc':fel_c0[0],'yc':fel_c0[1],'R':fel_c0[2]}
+                soiln = pprt.copy()
+                del soiln['Circle']
+                del soiln['slope_len']
+                soiln['circle'] = nc
+                soiln['alp'] = math.degrees(soiln['alp'])
+
+                s1 = SoilSpace(**soiln)
                 s2 = Model(s1)
                 xcord,ycord = zip(*s2.c_points[::-1])
                 xc, yc, R = list(s1.properties['Circle'].values())
@@ -455,7 +463,13 @@ class View:
                 plt.plot([len, 2 * len], [h, h], color='#000000')
 
                 osm_c0 = full.results['min_osm_c0']
-                s1 = SoilSpace(circle={'xc':osm_c0[0],'yc':osm_c0[1],'R':osm_c0[2]})
+                nc = {'xc':osm_c0[0],'yc':osm_c0[1],'R':osm_c0[2]}
+                soiln = pprt.copy()
+                del soiln['Circle']
+                del soiln['slope_len']
+                soiln['circle'] = nc
+                soiln['alp'] = math.degrees(soiln['alp'])
+                s1 = SoilSpace(**soiln)
                 s2 = Model(s1)
                 xcord,ycord = zip(*s2.c_points[::-1])
                 xc, yc, R = list(s1.properties['Circle'].values())
@@ -480,8 +494,17 @@ class View:
 
 
 def main():
+    """
+    Como usar.
+    SoilSpace() -> Define tanto o solo quanto o talude.
+                Possui valores padrões que podem ser sobescritos na criação da classe, ex: slope = SoilSpace(h=10)
+                Os valores padrões estão na definição da classe lá em cima.
+    SoilFS()    -> Envolve o código inteiro, com o modelo matemático, o cálculo do FS e sua plotagem.
+                Você pode passar o talude como parâmetro para a inicialização da classe, caso não ele usará o SoilSpace() padrão.
+                SoilFS.view() plota os resultados.
+    """
     slope = SoilSpace()
-    fs = SoilFs(slope,methods=['OSM','Fellenius'],minimize=True)
+    fs = SoilFs(slope, methods=['OSM','Fellenius'], minimize=True)
     fs.view()
 
 
