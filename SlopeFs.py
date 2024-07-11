@@ -1,8 +1,8 @@
 from typing import Optional, Dict, Tuple, List
 import math
 import numpy as np
-import scipy as sp
-
+from scipy import optimize
+from matplotlib import pyplot as plt
 
 class SoilSpace:
     """
@@ -11,7 +11,7 @@ class SoilSpace:
             - The physical characteristics of the slope
             - The mechnanical characteristics of the soil
         Uses:
-            Used standalone to define the soil before sending it to Model and Soil_fs
+            Used standalone to define the soil and slope before sending it to Model and Soil_fs
             Default values present to simplify analysing behaviour
     """
 
@@ -26,23 +26,21 @@ class SoilSpace:
         }
 
         self.update_slope_len()
-        self.update_circle(self, circle)
+
+        if not circle:
+            self.update_circle()
+        else:
+            assert ['xc', 'yc', 'R'] == list(circle.keys()), f'Wrong dictionary keys: {list(circle.keys())}'
+            self.update_circle(xc=circle['xc'], yc=circle['yc'], r=circle['R'])
 
     def update_slope_len(self):
         self.properties['slope_len'] = self.properties['h'] / math.tan(self.properties['alp'])
 
-    @staticmethod
-    def update_circle(self, circle):
-        if not circle:
+    def update_circle(self, xc=None, yc=None, r=None):
+        if xc is None and yc is None and r is None:
             xc = 0.5 * self.properties['h'] / math.tan(self.properties['alp'])
-            yc = 1.333 * self.properties['h']
-            r = 1 * math.sqrt(xc ** 2 + yc ** 2)
-        else:
-            keys = list(circle.keys())
-            assert ('xc' in keys and 'yc' in keys and 'R' in keys), f'Invalid keys {keys}'
-            xc = circle['xc']
-            yc = circle['yc']
-            r = circle['R']
+            yc = (4 / 3) * self.properties['h']
+            r = math.sqrt(xc ** 2 + yc ** 2)
 
         circle = {
             'xc': xc,
@@ -50,7 +48,6 @@ class SoilSpace:
             'R': r
         }
 
-        print(circle)
         self.properties['Circle'] = circle
 
     def __str__(self):
@@ -60,17 +57,19 @@ class SoilSpace:
 class Model:
     """
     Model class:
-    Responsible for calculating the factor of safety of the slope.
+        Responsible for finding the values associated with the critical circle.
+    Uses:
+        Used for finding the variables needed to calculate the FS of the slope.
     """
 
-    def __init__(self, sl: Optional[SoilSpace] = None):
-        if sl is None:
-            sl = SoilSpace()
+    def __init__(self, soil: Optional[SoilSpace] = None):
+        if soil is None:
+            soil = SoilSpace()
 
-        self.soil = sl
-        self.sl: Dict[str, float] = sl.properties
+        self.soil = soil
+        self.sl: Dict[str, float] = soil.properties
 
-        self.circle: Dict[str, float] = self.sl['Circle']
+        self.circle = self.sl['Circle']
 
         self.points: Tuple[Tuple, Tuple] = self.intersec()
         self.c_points: List[Tuple] = self.split_geometry()
@@ -97,7 +96,7 @@ class Model:
 
         delta = b ** 2 - 4 * a * c
 
-        assert delta > 0, f'Math error, delta:{delta} <= 0, Circle doesn\'t intersect slope.'
+        assert delta > 0, 'Math error, delta <= 0, Circle doesn\'t intersect slope.'
 
         def f(x):
             if 0 < x < l:
@@ -109,7 +108,6 @@ class Model:
 
         x1 = (-b + math.sqrt(delta)) / (2 * a)
         x2 = (-b - math.sqrt(delta)) / (2 * a)
-
         p1 = f(x1)
         p2 = f(x2)
 
@@ -145,11 +143,11 @@ class Model:
         alp = tot_a / ns
         gam = math.atan(abs((v_c[1] - v_p_r[1]) / (v_c[0] - v_p_r[0])))
 
-        f = lambda n: map(lambda x: round(x, 2),
+        f = lambda n: map(lambda x: x,
                           r * np.array([math.cos(-(gam + n * alp)), math.sin(-(gam + n * alp))]) + v_c)
         return [tuple(f(n)) for n in range(ns + 1)]
 
-    def mk_polys(self) -> List[Tuple]:
+    def mk_polys(self) -> np.array:
         """
             This method creates the polygons whose areas are going to be calculated.
             It takes the list of points in the circle, reflects them into the corresponding part of the surface.
@@ -158,13 +156,13 @@ class Model:
         """
         c_parts = self.c_points
         pts_x, pts_y = zip(*c_parts)
-        a = self.sl['alp']
+        a = math.tan(self.sl['alp'])
         h = self.sl['h']
         l = self.sl['slope_len']
 
         def f(x):
             if 0 <= x <= l:
-                return round(a * x, 2)
+                return a * x
             elif x > l:
                 return h
             else:
@@ -184,7 +182,9 @@ class Model:
 
             return np.array(polys)
 
-        return pair_points(full_points)
+        a = pair_points(full_points)
+
+        return a
 
     def calc_alphas(self):
         """
@@ -193,6 +193,7 @@ class Model:
         """
 
         polys = self.polys
+
         alp = lambda dy, dx: math.atan(dy / dx)
         n_polys = polys.shape[0]
 
@@ -204,7 +205,8 @@ class Model:
             dx = polys[i][0][0] - polys[i][-1][0]
 
             dxs.append(dx)
-            alphas.append(alp(dy, dx))
+            alpha = alp(dy,dx)
+            alphas.append(alpha)
 
         return dxs, alphas
 
@@ -233,103 +235,255 @@ class Model:
 class SoilFs:
     """
         SoilFs:
-        Serves as a wrapper for everything.
-        Houses methods for showing and analyzing data.
+            Wraps all the code together, calling the model, calculating FS and calling the view.
+        Uses:
+            To be used by the end user when dealing with the program.
     """
 
-    def __init__(self, soil: Optional[SoilSpace] = None):
-        if not soil:
-            soil = SoilSpace()
+    def __init__(self, soil: Optional[SoilSpace] = None, methods=['Fellenius', 'OSM'], minimize=True):
+        self.model = Model(soil)
+        self.sl = self.model.soil.properties
+        self.c0 = self.sl['Circle']
 
-        self.soil = soil
-        self.sl = soil.properties
-        self.results = self.end_results()
-        self.fs = {'Fellenius': self.results.fun
-        }
+        self.results = self.end_results(methods,minimize)
+        self.view = lambda: View.plot(self)
 
-    def end_results(self) -> Tuple[float]:
+    def end_results(self, methods, minimize) -> Dict[str, float]:
         """
             Finalizes everything by gathering all the previous steps and calculating the FS.
             Bishop is an implicit equation, its roots are found using Newton's method (via Scipy.optimize)
             It returns both values in a dictionary format, according to the format used by the SoilSpace class.
         """
-        c0 = list(self.sl['Circle'].values())
-        model_0 = Model(self.soil)
-        fs = self.fellenius(model_0)
-        print(f"Inicial {fs}")
+        gam = self.sl['gam']
+        c = self.sl['c']
+        phi = self.sl['phi']
 
-        return (
-            sp.optimize.minimize(self.fellenius_call, x0=c0,method='SLSQP')
-        )
+        are = self.model.polys_A
+        alp = self.model.alphas
+        dxs = self.model.dxs
 
-    def fellenius_call(self, c0: List[float]):
-        circle = {
-            'xc': c0[0],
-            'yc': c0[1],
-            'R': c0[2]
-        }
-        print(c0)
-        self.soil.update_circle(self.soil, circle)
-        model = Model(self.soil)
+        results = {'c0': list(self.sl['Circle'].values())}
+        if 'Fellenius' in methods:
+            fel = self.fel0(c, gam, are, alp, phi, dxs)
+            results['fel0'] = fel
 
-        return self.fellenius(model)
+            if minimize:
+                min_fel = self.min_fel(self.model.soil)
+                results['min_fel_c0'] = list(min_fel.x)
+                results['min_fel'] = min_fel.fun
+                self.sl['Circle'] = self.c0
 
-    def bishop_call(self, c0):
-        circle = {
-            'xc': c0[0],
-            'yc': c0[1],
-            'R': c0[2]
-        }
-        print(c0)
-        self.soil.update_circle(self.soil, circle)
-        model = Model(self.soil)
+        if 'OSM' in methods:
+            osm0 = self.bis0(c, gam, are, alp, phi, dxs)
+            results['osm0'] = osm0
+            if minimize:
+                min_osm = self.min_bis(self.model.soil)
+                results['min_osm_c0'] = list(min_osm.x)
+                results['min_osm'] = min_osm.fun
+                self.sl['Circle'] = self.c0
 
-        return self.bishop(model)
+        return results
 
     @staticmethod
-    def fellenius(model: Model, u=0):
-        c = model.sl['c']
-        slen = model.sl['slope_len']
-        gam = model.sl['gam']
-        phi = model.sl['phi']
-        n = model.sl['num_slice']
-        are = model.polys_A
-        alp = model.alphas
+    def fel0(c, gam, are, alp, phi, dxs):
         size = len(are)
-
         fell1 = sum(
-            [c * slen / n + (gam * are[i] * math.cos(alp[i]) - u * slen) * math.tan(phi) for i in range(size)])
-        fell2 = sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])
+            [c * dxs[i] / math.cos(alp[i]) for i in range(size)]
+        )
+        fell2 = sum(
+            [math.tan(phi) * gam * are[i] * math.cos(alp[i]) for i in range(size)]
+        )
+        fell3 = sum(
+            [gam * are[i] * math.sin(alp[i]) for i in range(size)]
+        )
 
-        fs = fell1 / fell2
+        fs = (fell1 + fell2) / fell3
         return fs
 
     @staticmethod
-    def bishop(model):
-        c = model.sl['c']
-        gam = model.sl['gam']
-        phi = model.sl['phi']
-        are = model.polys_A
-        alp = model.alphas
-        dxs = model.dxs
-        size = len(are)
-
+    def bis0(c, gam, are, alp, phi, dxs):
         def bishop_calc(fs):
-            bip1 = (sum([gam * are[i] * math.sin(alp[i]) for i in range(size)])) ** -1
-            bip2 = sum([(c * dxs[i] + gam * are[i] * math.tan(phi)) / (
-                    math.cos(alp[i]) + math.sin(alp[i]) * math.tan(phi) / fs) for i in range(size)])
+            size = len(are)
+            bip1 = (sum(
+                [gam * are[i] * math.sin(alp[i]) for i in range(size)])) ** -1
+            bip2 = sum(
+                [(c * dxs[i] + gam * are[i] * math.tan(phi)) /
+                 (math.cos(alp[i]) + math.sin(alp[i]) * math.tan(phi) / fs) for i in range(size)])
             return fs - bip1 * bip2
 
-        return sp.optimize.newton(bishop_calc, x0=2)
+        return optimize.newton(bishop_calc, x0=2)
+
+    @staticmethod
+    def min_fel(slope):
+        def f(c):
+            slope.update_circle(c[0], c[1], c[2])
+            model = Model(slope)
+            if any(dx == 0 for dx in model.dxs):
+                return np.inf
+            c = model.sl['c']
+            gam = model.sl['gam']
+            are = model.polys_A
+            alp = model.alphas
+            phi = model.sl['phi']
+            dxs = model.dxs
+            fs = SoilFs.fel0(c, gam, are, alp, phi, dxs)
+            if np.isnan(fs):
+                return np.inf
+            return fs
+        c0 = list(slope.properties['Circle'].values())
+        fun = optimize.minimize(f, c0, method='SLSQP')
+        return fun
+
+    @staticmethod
+    def min_bis(slope):
+        def f(c):
+            slope.update_circle(c[0], c[1], c[2])
+            model = Model(slope)
+            if any(dx == 0 for dx in model.dxs):
+                return np.inf
+            c = model.sl['c']
+            gam = model.sl['gam']
+            are = model.polys_A
+            alp = model.alphas
+            phi = model.sl['phi']
+            dxs = model.dxs
+            fs = SoilFs.bis0(c, gam, are, alp, phi, dxs)
+            if np.isnan(fs):
+                return np.inf
+            return fs
+        c0 = list(slope.properties['Circle'].values())
+        fun = optimize.minimize(f, c0, method='SLSQP')
+        return fun
 
     def __str__(self):
-        return f'{self.fs}'
+        return '\n'.join(f'{key}: {value}' for key, value in self.results.items())
+
+
+class View:
+    """
+    View Class:
+        It presents all the information to the user.
+    Uses:
+        To be called by SoilFS.
+    """
+    @staticmethod
+    def plot(full: SoilFs):
+        pprt = full.sl
+        pprt2 = full.model
+        xcord,ycord = zip(*pprt2.c_points[::-1])
+        h = pprt['h']
+        len = pprt['slope_len']
+        xc, yc, R = list(pprt['Circle'].values())
+
+        plt.xlim([-len, 2*len])
+        plt.ylim([-len, 2*len])
+        plt.plot([-2*len, 0], [0, 0], color='#000000')
+        plt.plot([0, len], [0, h],  color='#000000')
+        plt.plot([len, 2*len], [h, h], color='#000000')
+
+        plt.plot(xcord, ycord, color='#3200ff')
+        plt.plot([xc, xcord[-1]], [yc, ycord[-1]],color='#3200ff')
+        plt.plot([xcord[0], xc], [ycord[0], yc],color='#3200ff')
+
+        plt.plot(xc,yc,color='#3200ff')
+
+        title = ''
+        to_plot = full.results.keys()
+
+        if 'fel0' in to_plot:
+            fel = '{:.2f}'.format(full.results['fel0'])
+            title += f'Fellenius={fel} '
+        if 'osm0' in to_plot:
+            osm = '{:.2f}'.format(full.results['osm0'])
+            title += f'OSM={osm}'
+
+        xc,yc,R = map(lambda x: round(x,2), [xc,yc,R])
+        title += f'\n c=(xc:{xc},yc:{yc},R:{R})'
+
+        plt.title(title)
+
+        polys = pprt2.polys[::-1]
+        for poly in polys:
+            a, b = zip(*poly)
+            plt.plot(a, b, color='#ff3200')
+
+        plt.show()
+        plt.close()
+
+        to_look = ['min_fel', 'min_osm']
+        found = [_ in to_plot for _ in to_look]
+        size_of_plot = sum(found)
+        i = 1
+        if any(found):
+            plt.figure(figsize=(13,5))
+            if found[0]:
+                plt.subplot(1,size_of_plot,i)
+                plt.xlim([-len, 2 * len])
+                plt.ylim([-len, 2 * len])
+                plt.plot([-2 * len, 0], [0, 0], color='#000000')
+                plt.plot([0, len], [0, h], color='#000000')
+                plt.plot([len, 2 * len], [h, h], color='#000000')
+
+                fel_c0 = full.results['min_fel_c0']
+                s1 = SoilSpace(circle={'xc':fel_c0[0],'yc':fel_c0[1],'R':fel_c0[2]})
+                s2 = Model(s1)
+                xcord,ycord = zip(*s2.c_points[::-1])
+                xc, yc, R = list(s1.properties['Circle'].values())
+
+                plt.plot([xcord[0],xc],[ycord[0],yc],color='#3200ff')
+                plt.plot([xc, xcord[-1]], [yc, ycord[-1]], color='#3200ff')
+                plt.plot(xcord, ycord, color='#3200ff')
+
+                polys = s2.polys[::-1]
+                for poly in polys:
+                    a, b = zip(*poly)
+                    plt.plot(a, b, color='#ff3200')
+
+                ff = '{:.2f}'.format(full.results['min_fel'])
+
+                xcn,ycn,Rn= map(lambda x:round(x,2),[xc,yc,R])
+
+                plt.title('FS_{Fellenius}=' + f'{ff}' + '\n' + f'c=(xc:{xcn},yc:{ycn},R:{Rn})')
+                i += 1
+
+            if found[1]:
+                plt.subplot(1, size_of_plot, i)
+                plt.xlim([-len, 2 * len])
+                plt.ylim([-len, 2 * len])
+                plt.plot([-2 * len, 0], [0, 0], color='#000000')
+                plt.plot([0, len], [0, h], color='#000000')
+                plt.plot([len, 2 * len], [h, h], color='#000000')
+
+                osm_c0 = full.results['min_osm_c0']
+                s1 = SoilSpace(circle={'xc':osm_c0[0],'yc':osm_c0[1],'R':osm_c0[2]})
+                s2 = Model(s1)
+                xcord,ycord = zip(*s2.c_points[::-1])
+                xc, yc, R = list(s1.properties['Circle'].values())
+
+                plt.plot(xcord, ycord, color='#3200ff')
+                plt.plot([xc, xcord[-1]], [yc, ycord[-1]], color='#3200ff')
+                plt.plot([xcord[0], xc], [ycord[0], yc], color='#3200ff')
+
+                polys = s2.polys[::-1]
+                for poly in polys:
+                    a, b = zip(*poly)
+                    plt.plot(a, b, color='#ff3200')
+
+                osm = '{:.2f}'.format(full.results['min_osm'])
+
+                xcn,ycn,Rn= map(lambda x:round(x,2),[xc,yc,R])
+                plt.title('FS_{OSM}=' + f'{osm}' + '\n' + f'c=(xc:{xcn},yc:{ycn},R:{Rn})')
+
+                i += 1
+
+            plt.show()
 
 
 def main():
-    soil = SoilSpace()
-    fs = SoilFs(soil)
-    print(fs.results)
+    slope = SoilSpace()
+    fs = SoilFs(slope,methods=['OSM','Fellenius'],minimize=True)
+    fs.view()
+
 
 if __name__ == '__main__':
     main()
