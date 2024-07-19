@@ -99,7 +99,7 @@ class Model:
         assert delta > 0, 'Math error, delta <= 0, Circle doesn\'t intersect slope.'
 
         def f(x):
-            if 0 < x < l:
+            if 0 <= x < l:
                 return x, t * x
             elif x < 0:
                 return xc - math.sqrt(r ** 2 - yc ** 2), 0
@@ -496,6 +496,7 @@ class View:
 def main():
     """
     Como usar.
+    https://www.desmos.com/calculator/iibc0laiu1
     SoilSpace() -> Define tanto o solo quanto o talude.
                 Possui valores padrões que podem ser sobescritos na criação da classe, ex: slope = SoilSpace(h=10)
                 Os valores padrões estão na definição da classe lá em cima.
@@ -503,8 +504,10 @@ def main():
                 Você pode passar o talude como parâmetro para a inicialização da classe, caso não ele usará o SoilSpace() padrão.
                 SoilFS.view() plota os resultados.
     """
-    slope = SoilSpace()
-    fs = SoilFs(slope, methods=['OSM','Fellenius'], minimize=True)
+    #default = SoilSpace()
+    def f(y, x): return math.degrees(math.tan(y/x))
+    slope = SoilSpace(h=10, gam=18.2, c=15, phi=20, alp=f(y=10, x=20))
+    fs = SoilFs(slope, methods=['Fellenius', 'OSM'], minimize=True)
     fs.view()
 
 
