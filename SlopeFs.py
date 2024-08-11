@@ -96,6 +96,7 @@ class Model:
 
         delta = b ** 2 - 4 * a * c
 
+
         assert delta > 0, 'Math error, delta <= 0, Circle doesn\'t intersect slope.'
 
         def f(x):
@@ -317,19 +318,21 @@ class SoilFs:
     def min_fel(slope):
         def f(c):
             slope.update_circle(c[0], c[1], c[2])
-            model = Model(slope)
-            if any(dx == 0 for dx in model.dxs):
-                return np.inf
-            c = model.sl['c']
-            gam = model.sl['gam']
-            are = model.polys_A
-            alp = model.alphas
-            phi = model.sl['phi']
-            dxs = model.dxs
-            fs = SoilFs.fel0(c, gam, are, alp, phi, dxs)
-            if np.isnan(fs):
-                return np.inf
+            try:
+                model = Model(slope)
+                c = model.sl['c']
+                gam = model.sl['gam']
+                are = model.polys_A
+                alp = model.alphas
+                phi = model.sl['phi']
+                dxs = model.dxs
+                fs = SoilFs.fel0(c, gam, are, alp, phi, dxs)
+                if np.isnan(fs):
+                    return np.inf
+            except AssertionError:
+                return 9999
             return fs
+
         c0 = list(slope.properties['Circle'].values())
         fun = optimize.minimize(f, c0, method='SLSQP')
         return fun
@@ -338,19 +341,23 @@ class SoilFs:
     def min_bis(slope):
         def f(c):
             slope.update_circle(c[0], c[1], c[2])
-            model = Model(slope)
-            if any(dx == 0 for dx in model.dxs):
-                return np.inf
-            c = model.sl['c']
-            gam = model.sl['gam']
-            are = model.polys_A
-            alp = model.alphas
-            phi = model.sl['phi']
-            dxs = model.dxs
-            fs = SoilFs.bis0(c, gam, are, alp, phi, dxs)
-            if np.isnan(fs):
-                return np.inf
+            try:
+                model = Model(slope)
+                if any(dx == 0 for dx in model.dxs):
+                    return np.inf
+                c = model.sl['c']
+                gam = model.sl['gam']
+                are = model.polys_A
+                alp = model.alphas
+                phi = model.sl['phi']
+                dxs = model.dxs
+                fs = SoilFs.bis0(c, gam, are, alp, phi, dxs)
+                if np.isnan(fs):
+                    return np.inf
+            except AssertionError:
+                return 9999
             return fs
+
         c0 = list(slope.properties['Circle'].values())
         fun = optimize.minimize(f, c0, method='SLSQP')
         return fun
@@ -495,19 +502,25 @@ class View:
 
 def main():
     """
-    Como usar.
     https://www.desmos.com/calculator/iibc0laiu1
+    ^ Desmos pra verificar manualmente a geometria do problema.
+
+    Como usar?
     SoilSpace() -> Define tanto o solo quanto o talude.
-                Possui valores padrões que podem ser sobescritos na criação da classe, ex: slope = SoilSpace(h=10)
+                Possui valores padrões que podem ser sobrescritos na criação da classe, ex: slope = SoilSpace(h=10)
                 Os valores padrões estão na definição da classe lá em cima.
     SoilFS()    -> Envolve o código inteiro, com o modelo matemático, o cálculo do FS e sua plotagem.
                 Você pode passar o talude como parâmetro para a inicialização da classe, caso não ele usará o SoilSpace() padrão.
                 SoilFS.view() plota os resultados.
     """
-    #default = SoilSpace()
-    def f(y, x): return math.degrees(math.tan(y/x))
-    slope = SoilSpace(h=10, gam=18.2, c=15, phi=20, alp=f(y=10, x=20))
+    default = SoilSpace()
+    deg = math.degrees(math.atan(10/20))
+    slope = SoilSpace(h=10, gam=18.2, c=15, phi=20, alp=deg)
+
     fs = SoilFs(slope, methods=['Fellenius', 'OSM'], minimize=True)
+    #fs = SoilFs(default)
+
+    print(fs)
     fs.view()
 
 
