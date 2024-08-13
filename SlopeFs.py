@@ -241,7 +241,7 @@ class SoilFs:
             To be used by the end user when dealing with the program.
     """
 
-    def __init__(self, soil: Optional[SoilSpace] = None, methods=['Fellenius', 'OSM'], minimize=True):
+    def __init__(self, soil: Optional[SoilSpace] = None, methods=['Fellenius', 'Bishop'], minimize=True):
         self.model = Model(soil)
         self.sl = self.model.soil.properties
         self.c0 = self.sl['Circle']
@@ -274,13 +274,13 @@ class SoilFs:
                 results['min_fel'] = min_fel.fun
                 self.sl['Circle'] = self.c0
 
-        if 'OSM' in methods:
-            osm0 = self.bis0(c, gam, are, alp, phi, dxs)
-            results['osm0'] = osm0
+        if 'Bishop' in methods:
+            bis0 = self.bis0(c, gam, are, alp, phi, dxs)
+            results['bis0'] = bis0
             if minimize:
-                min_osm = self.min_bis(self.model.soil)
-                results['min_osm_c0'] = list(min_osm.x)
-                results['min_osm'] = min_osm.fun
+                min_bis = self.min_bis(self.model.soil)
+                results['min_bis_c0'] = list(min_bis.x)
+                results['min_bis'] = min_bis.fun
                 self.sl['Circle'] = self.c0
 
         return results
@@ -400,9 +400,9 @@ class View:
         if 'fel0' in to_plot:
             fel = '{:.2f}'.format(full.results['fel0'])
             title += f'Fellenius={fel} '
-        if 'osm0' in to_plot:
-            osm = '{:.2f}'.format(full.results['osm0'])
-            title += f'OSM={osm}'
+        if 'bis0' in to_plot:
+            bis = '{:.2f}'.format(full.results['bis0'])
+            title += f'Bishop={bis}'
 
         xc,yc,R = map(lambda x: round(x,2), [xc,yc,R])
         title += f'\n c=(xc:{xc},yc:{yc},R:{R})'
@@ -417,7 +417,7 @@ class View:
         plt.show()
         plt.close()
 
-        to_look = ['min_fel', 'min_osm']
+        to_look = ['min_fel', 'min_bis']
         found = [_ in to_plot for _ in to_look]
         size_of_plot = sum(found)
         i = 1
@@ -469,8 +469,8 @@ class View:
                 plt.plot([0, len], [0, h], color='#000000')
                 plt.plot([len, 2 * len], [h, h], color='#000000')
 
-                osm_c0 = full.results['min_osm_c0']
-                nc = {'xc':osm_c0[0],'yc':osm_c0[1],'R':osm_c0[2]}
+                bis_c0 = full.results['min_bis_c0']
+                nc = {'xc': bis_c0[0], 'yc': bis_c0[1], 'R': bis_c0[2]}
                 soiln = pprt.copy()
                 del soiln['Circle']
                 del soiln['slope_len']
@@ -490,10 +490,10 @@ class View:
                     a, b = zip(*poly)
                     plt.plot(a, b, color='#ff3200')
 
-                osm = '{:.2f}'.format(full.results['min_osm'])
+                bis = '{:.2f}'.format(full.results['min_bis'])
 
                 xcn,ycn,Rn= map(lambda x:round(x,2),[xc,yc,R])
-                plt.title('FS_{OSM}=' + f'{osm}' + '\n' + f'c=(xc:{xcn},yc:{ycn},R:{Rn})')
+                plt.title('FS_{Bishop}=' + f'{bis}' + '\n' + f'c=(xc:{xcn},yc:{ycn},R:{Rn})')
 
                 i += 1
 

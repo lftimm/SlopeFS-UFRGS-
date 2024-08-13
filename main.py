@@ -15,9 +15,14 @@ def main():
     """
     default = slf.SoilSpace()
     deg = math.degrees(math.atan(10/20))
-    slope = slf.SoilSpace(h=10, gam=18.2, c=15, phi=20, alp=deg)
+    #slope = slf.SoilSpace(h=10, gam=18.2, c=15, phi=20, alp=deg)
 
-    fs = slf.SoilFs(slope, methods=['Fellenius', 'OSM'], minimize=True)
+    slope = slf.SoilSpace()
+    fs = slf.SoilFs(slope)
+    print(fs)
+
+
+    #fs = slf.SoilFs(slope, methods=['Fellenius', 'OSM'], minimize=True)
     #fs = SoilFs(default)
 
     print(fs)
